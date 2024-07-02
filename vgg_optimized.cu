@@ -101,6 +101,37 @@ struct zeros
 
 
 
+__global__ void reluActivation(float *input, float *output, int size)
+{
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    
+    if (idx < size)
+    {
+        output[idx] = fmaxf(input[idx], 0.0f);
+    }
+}
+
+
+void cuReLU(float *input, float *output, int size)
+{
+    float *d_input, *d_output;
+    cudaMalloc(&d_input, size * sizeof(float));
+    cudaMalloc(&d_output, size * sizeof(float));
+    
+    cudaMemcpy(d_input, input, size * sizeof(float), cudaMemcpyHostToDevice);
+    
+    int blockSize = 256;
+    int numBlocks = (size + blockSize - 1) / blockSize;
+    
+    reluActivation<<<numBlocks, blockSize>>>(d_input, d_output, size);
+    
+    cudaMemcpy(output, d_output, size * sizeof(float), cudaMemcpyDeviceToHost);
+    
+    cudaFree(d_input);
+    cudaFree(d_output);
+}
+
+
 
 __global__ void convolution2d(float *input, float *filter, float *output,
                               int input_width, int input_height, int input_channels,
@@ -365,16 +396,18 @@ int main()
         input[i] = (float)std::rand() / RAND_MAX;
     }
 
-    // ===============  1 =====================
+    // Block 1
     std::cout << "CONV 224x224x64";
     output = (float *)malloc(224 * 224 * 64 * 1 * sizeof(float));
     cuConv2D(input, output, 224, 224, 3, 1, 64, 3, 3, 1, 1, 1, 1, 1, 1);
+    cuReLU(output, output, 224 * 224 * 64);
     std::swap(input, output);
     free(output);
 
     std::cout << "CONV 224x224x64";
     output = (float *)malloc(224 * 224 * 64 * 1 * sizeof(float));
     cuConv2D(input, output, 224, 224, 64, 1, 64, 3, 3, 1, 1, 1, 1, 1, 1);
+    cuReLU(output, output, 224 * 224 * 64);
     std::swap(input, output);
     free(output);
 
@@ -384,18 +417,20 @@ int main()
     std::swap(input, output);
     free(output);
 
-    // ===============  2 =====================
+    // Block 2
     std::cout << "CONV 112x112x128";
     output = (float *)malloc(112 * 112 * 128 * 1 * sizeof(float));
-    cuConv2D(input, output, 112, 112, 64, 1, 64, 3, 3, 1, 1, 1, 1, 1, 1);
+    cuConv2D(input, output, 112, 112, 64, 1, 128, 3, 3, 1, 1, 1, 1, 1, 1);
+    cuReLU(output, output, 112 * 112 * 128);
     std::swap(input, output);
     free(output);
 
-    // std::cout << "CONV 112x112x128";
-    // output = (float *)malloc(112 * 112 * 128 * 1 * sizeof(float));
-    // cuConv2D(input, output, 112, 112, 128, 1, 64, 3, 3, 1, 1, 1, 1, 1, 1);
-    // std::swap(input, output);
-    // free(output);
+    std::cout << "CONV 112x112x128";
+    output = (float *)malloc(112 * 112 * 128 * 1 * sizeof(float));
+    cuConv2D(input, output, 112, 112, 128, 1, 128, 3, 3, 1, 1, 1, 1, 1, 1);
+    cuReLU(output, output, 112 * 112 * 128);
+    std::swap(input, output);
+    free(output);
 
     std::cout << "POOLMAX 56x56x128";
     output = (float *)malloc(56 * 56 * 128 * sizeof(float));
@@ -403,16 +438,25 @@ int main()
     std::swap(input, output);
     free(output);
 
-    // ===============  3 =====================
+    // Block 3
     std::cout << "CONV 56x56x256";
     output = (float *)malloc(56 * 56 * 256 * 1 * sizeof(float));
-    cuConv2D(input, output, 56, 56, 128, 1, 64, 3, 3, 1, 1, 1, 1, 1, 1);
+    cuConv2D(input, output, 56, 56, 128, 1, 256, 3, 3, 1, 1, 1, 1, 1, 1);
+    cuReLU(output, output, 56 * 56 * 256);
     std::swap(input, output);
     free(output);
 
     std::cout << "CONV 56x56x256";
     output = (float *)malloc(56 * 56 * 256 * 1 * sizeof(float));
-    cuConv2D(input, output, 56, 56, 256, 1, 64, 3, 3, 1, 1, 1, 1, 1, 1);
+    cuConv2D(input, output, 56, 56, 256, 1, 256, 3, 3, 1, 1, 1, 1, 1, 1);
+    cuReLU(output, output, 56 * 56 * 256);
+    std::swap(input, output);
+    free(output);
+
+    std::cout << "CONV 56x56x256";
+    output = (float *)malloc(56 * 56 * 256 * 1 * sizeof(float));
+    cuConv2D(input, output, 56, 56, 256, 1, 256, 3, 3, 1, 1, 1, 1, 1, 1);
+    cuReLU(output, output, 56 * 56 * 256);
     std::swap(input, output);
     free(output);
 
@@ -422,16 +466,25 @@ int main()
     std::swap(input, output);
     free(output);
 
-    // ===============  4 =====================
+    // Block 4
     std::cout << "CONV 28x28x512";
     output = (float *)malloc(28 * 28 * 512 * 1 * sizeof(float));
-    cuConv2D(input, output, 28, 28, 256, 1, 64, 3, 3, 1, 1, 1, 1, 1, 1);
+    cuConv2D(input, output, 28, 28, 256, 1, 512, 3, 3, 1, 1, 1, 1, 1, 1);
+    cuReLU(output, output, 28 * 28 * 512);
     std::swap(input, output);
     free(output);
 
     std::cout << "CONV 28x28x512";
     output = (float *)malloc(28 * 28 * 512 * 1 * sizeof(float));
-    cuConv2D(input, output, 28, 28, 512, 1, 64, 3, 3, 1, 1, 1, 1, 1, 1);
+    cuConv2D(input, output, 28, 28, 512, 1, 512, 3, 3, 1, 1, 1, 1, 1, 1);
+    cuReLU(output, output, 28 * 28 * 512);
+    std::swap(input, output);
+    free(output);
+
+    std::cout << "CONV 28x28x512";
+    output = (float *)malloc(28 * 28 * 512 * 1 * sizeof(float));
+    cuConv2D(input, output, 28, 28, 512, 1, 512, 3, 3, 1, 1, 1, 1, 1, 1);
+    cuReLU(output, output, 28 * 28 * 512);
     std::swap(input, output);
     free(output);
 
@@ -441,41 +494,52 @@ int main()
     std::swap(input, output);
     free(output);
 
-    // ===============  5 =====================
-    std::cout << "CONV 14x14x1024";
-    output = (float *)malloc(14 * 14 * 1024 * 1 * sizeof(float));
-    cuConv2D(input, output, 14, 14, 512, 1, 64, 3, 3, 1, 1, 1, 1, 1, 1);
+    // Block 5
+    std::cout << "CONV 14x14x512";
+    output = (float *)malloc(14 * 14 * 512 * 1 * sizeof(float));
+    cuConv2D(input, output, 14, 14, 512, 1, 512, 3, 3, 1, 1, 1, 1, 1, 1);
+    cuReLU(output, output, 14 * 14 * 512);
     std::swap(input, output);
     free(output);
 
-    std::cout << "CONV 14x14x1024";
-    output = (float *)malloc(14 * 14 * 1024 * 1 * sizeof(float));
-    cuConv2D(input, output, 14, 14, 1024, 1, 64, 3, 3, 1, 1, 1, 1, 1, 1);
+    std::cout << "CONV 14x14x512";
+    output = (float *)malloc(14 * 14 * 512 * 1 * sizeof(float));
+    cuConv2D(input, output, 14, 14, 512, 1, 512, 3, 3, 1, 1, 1, 1, 1, 1);
+    cuReLU(output, output, 14 * 14 * 512);
     std::swap(input, output);
     free(output);
 
-    std::cout << "POOLMAX 7x7x1024";
-    output = (float *)malloc(7 * 7 * 1024 * sizeof(float));
-    cuMaxPool(input, output, 14, 14, 1024, 1);
+    std::cout << "CONV 14x14x512";
+    output = (float *)malloc(14 * 14 * 512 * 1 * sizeof(float));
+    cuConv2D(input, output, 14, 14, 512, 1, 512, 3, 3, 1, 1, 1, 1, 1, 1);
+    cuReLU(output, output, 14 * 14 * 512);
     std::swap(input, output);
-    // free(output);
+    free(output);
 
-    // ===============  6 =====================
-    // std::cout << "FC 4096";
-    // output = (float *)malloc(4096 * sizeof(float));
-    // cuFC(input, output, 7 * 7 * 1024, 4096);
-    // std::swap(input, output);
-    // free(output);
+    std::cout << "POOLMAX 7x7x512";
+    output = (float *)malloc(7 * 7 * 512 * sizeof(float));
+    cuMaxPool(input, output, 14, 14, 512, 1);
+    std::swap(input, output);
+    free(output);
 
-    // std::cout << "FC 4096";
-    // output = (float *)malloc(4096 * sizeof(float));
-    // cuFC(input, output, 4096, 4096);
-    // std::swap(input, output);
-    // free(output);
+    // Fully connected layers
+    std::cout << "FC 4096";
+    output = (float *)malloc(4096 * sizeof(float));
+    cuFC(input, output, 7 * 7 * 512, 4096);
+    cuReLU(output, output, 4096);
+    std::swap(input, output);
+    free(output);
 
-    // std::cout << "FC 1000";
-    // output = (float *)malloc(1000 * sizeof(float));
-    // cuFC(input, output, 4096, 1000);
+    std::cout << "FC 4096";
+    output = (float *)malloc(4096 * sizeof(float));
+    cuFC(input, output, 4096, 4096);
+    cuReLU(output, output, 4096);
+    std::swap(input, output);
+    free(output);
+
+    std::cout << "FC 1000";
+    output = (float *)malloc(1000 * sizeof(float));
+    cuFC(input, output, 4096, 1000);
 
     free(input);
     free(output);
