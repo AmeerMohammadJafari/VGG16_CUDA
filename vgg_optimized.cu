@@ -223,13 +223,16 @@ void cuConv2D(float *input, float *output, int w, int h, int c, int n, int k,
     // Add bias
     addBias<<<(n * k + 255) / 256, 256>>>(h_desc.data, bias.data, n * k);
 
+    
+
+    cudaDeviceSynchronize();
+
+
     auto end = std::chrono::steady_clock::now();
     int fwd_time = static_cast<int>(std::chrono::duration<double,
                                     std::micro>(end - start).count());
 
     std::cout << " " << fwd_time << " ms" << std::endl;
-
-
     // Copy output data to host
     cudaMemcpy(output, h_desc.data, n * k * out_h * out_w * sizeof(float), cudaMemcpyDeviceToHost);
 
@@ -337,48 +340,152 @@ __global__ void matrixVectorMultiply(float *A, float *B, float *C, int left, int
         C[idx] = sum;
     }
 }
+__global__ void sgemm_naive(int M, int N, int K, float alpha, const float *A,
+                            const float *B, float beta, float *C) {
+  // compute position in C that this thread is responsible for
+  const unsigned int x = blockIdx.x * blockDim.x + threadIdx.x;
+  const unsigned int y = blockIdx.y * blockDim.y + threadIdx.y;
 
+  // `if` condition is necessary for when M or N aren't multiples of 32.
+  if (x < M && y < N) {
+    float tmp = 0.0;
+    for (int i = 0; i < K; ++i) {
+      tmp += A[x * K + i] * B[i * N + y];
+    }
+    // C = α*(A@B)+β*C
+    C[x * N + y] = alpha * tmp + beta * C[x * N + y];
+  }
+}
+
+// void cuFC(float *input, float *output, int left, int right)
+// {
+//     // Allocate device memory for input, weights, and output
+//     float *d_input, *d_weights, *d_output;
+//     cudaMalloc(&d_input, left * sizeof(float));
+//     cudaMalloc(&d_weights, left * right * sizeof(float));
+//     cudaMalloc(&d_output, right * sizeof(float));
+
+//     // Copy input and weights from host to device
+//     cudaMemcpy(d_input, input, left * sizeof(float), cudaMemcpyHostToDevice);
+
+//     float *h_weights = (float *)malloc(left * right * sizeof(float));
+//     for (int i = 0; i < left * right; i++)
+//     {
+//         h_weights[i] = (float)std::rand() / RAND_MAX / 1000;
+//     }
+//     cudaMemcpy(d_weights, h_weights, left * right * sizeof(float), cudaMemcpyHostToDevice);
+
+//     // Compute grid and block dimensions
+//     dim3 threadsPerBlock(256);
+//     dim3 numBlocks((right + threadsPerBlock.x - 1) / threadsPerBlock.x);
+
+//     // Perform matrix-vector multiplication
+//     auto start = std::chrono::steady_clock::now();
+//     matrixVectorMultiply<<<numBlocks, threadsPerBlock>>>(d_weights, d_input, d_output, left, right);
+
+//     auto end = std::chrono::steady_clock::now();
+//     int fwd_time = static_cast<int>(std::chrono::duration<double,
+//                                     std::micro>(end - start).count());
+
+//     std::cout << " " << fwd_time << " ms" << std::endl;
+
+
+//     // Copy output from device to host
+//     cudaMemcpy(output, d_output, right * sizeof(float), cudaMemcpyDeviceToHost);
+
+//     // Free device memory
+//     cudaFree(d_input);
+//     cudaFree(d_weights);
+//     cudaFree(d_output);
+// }
 void cuFC(float *input, float *output, int left, int right)
 {
-    // Allocate device memory for input, weights, and output
-    float *d_input, *d_weights, *d_output;
-    cudaMalloc(&d_input, left * sizeof(float));
-    cudaMalloc(&d_weights, left * right * sizeof(float));
-    cudaMalloc(&d_output, right * sizeof(float));
+    int lda = 1, ldb = left, ldc = 1, m = 1, k = left, n = right;
+    const float alf = 1;
+    const float bet = 0;
+    const float *alpha = &alf;
+    const float *beta = &bet;
 
-    // Copy input and weights from host to device
-    cudaMemcpy(d_input, input, left * sizeof(float), cudaMemcpyHostToDevice);
-
-    float *h_weights = (float *)malloc(left * right * sizeof(float));
+    float *h_B = (float *)malloc(left * right * sizeof(float));
     for (int i = 0; i < left * right; i++)
     {
-        h_weights[i] = (float)std::rand() / RAND_MAX / 1000;
+        h_B[i] = (float)std::rand() / RAND_MAX / 1000;
     }
-    cudaMemcpy(d_weights, h_weights, left * right * sizeof(float), cudaMemcpyHostToDevice);
 
-    // Compute grid and block dimensions
-    dim3 threadsPerBlock(256);
-    dim3 numBlocks((right + threadsPerBlock.x - 1) / threadsPerBlock.x);
+    // Allocate 3 arrays on GPU
+    float *d_A, *d_B, *d_C;
+    cudaMalloc(&d_A, left * sizeof(float));
+    cudaMalloc(&d_B, left * right * sizeof(float));
+    cudaMalloc(&d_C, right * sizeof(float));
 
-    // Perform matrix-vector multiplication
+    cudaMemcpy(d_A, input, left * sizeof(float), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_B, h_B, left * right * sizeof(float), cudaMemcpyHostToDevice);
+
+
+
     auto start = std::chrono::steady_clock::now();
-    matrixVectorMultiply<<<numBlocks, threadsPerBlock>>>(d_weights, d_input, d_output, left, right);
 
+    // Do the actual multiplication
+    sgemm_naive<<<64, 64>>>(m, n, k, 1.0, d_A, d_B, 0.0, d_C);
+    cudaDeviceSynchronize();
     auto end = std::chrono::steady_clock::now();
     int fwd_time = static_cast<int>(std::chrono::duration<double,
                                     std::micro>(end - start).count());
 
     std::cout << " " << fwd_time << " ms" << std::endl;
 
-
-    // Copy output from device to host
-    cudaMemcpy(output, d_output, right * sizeof(float), cudaMemcpyDeviceToHost);
-
-    // Free device memory
-    cudaFree(d_input);
-    cudaFree(d_weights);
-    cudaFree(d_output);
+    cudaMemcpy(output, d_C, right * sizeof(float), cudaMemcpyDeviceToHost);
+    // Destroy the handle
+    cudaFree(d_A);
+    cudaFree(d_B);
+    cudaFree(d_C);
 }
+// #define gpuErrchk(ans) { gpuAssert((ans), __FILE__, __LINE__); }
+// inline void gpuAssert(cudaError_t code, const char *file, int line, bool abort=true)
+// {
+//    if (code != cudaSuccess) 
+//    {
+//       fprintf(stderr,"GPUassert: %s %s %d\n", cudaGetErrorString(code), file, line);
+//       if (abort) exit(code);
+//    }
+// }
+
+
+
+// void cuFC(float *input, float *output, int left, int right)
+// {
+//     float *d_input, *d_weights, *d_output;
+//     gpuErrchk(cudaMalloc(&d_input, left * sizeof(float)));
+//     gpuErrchk(cudaMalloc(&d_weights, left * right * sizeof(float)));
+//     gpuErrchk(cudaMalloc(&d_output, right * sizeof(float)));
+
+//     gpuErrchk(cudaMemcpy(d_input, input, left * sizeof(float), cudaMemcpyHostToDevice));
+
+//     float *h_weights = (float *)malloc(left * right * sizeof(float));
+//     for (int i = 0; i < left * right; i++) {
+//         h_weights[i] = (float)std::rand() / RAND_MAX / 1000;
+//     }
+//     gpuErrchk(cudaMemcpy(d_weights, h_weights, left * right * sizeof(float), cudaMemcpyHostToDevice));
+//     free(h_weights);
+
+//     dim3 threadsPerBlock(256);
+//     dim3 numBlocks((right + threadsPerBlock.x - 1) / threadsPerBlock.x);
+
+//     auto start = std::chrono::steady_clock::now();
+//     matrixVectorMultiply<<<numBlocks, threadsPerBlock>>>(d_weights, d_input, d_output, left, right);
+//     gpuErrchk(cudaPeekAtLastError());
+//     gpuErrchk(cudaDeviceSynchronize()); // Ensure the kernel completes and captures any errors
+
+//     auto end = std::chrono::steady_clock::now();
+//     std::chrono::duration<double, std::micro> elapsed = end - start;
+//     std::cout << "Kernel Execution Time: " << elapsed.count() << " us" << std::endl;
+
+//     gpuErrchk(cudaMemcpy(output, d_output, right * sizeof(float), cudaMemcpyDeviceToHost));
+
+//     cudaFree(d_input);
+//     cudaFree(d_weights);
+//     cudaFree(d_output);
+// }
 
 
 
@@ -396,11 +503,14 @@ int main()
         input[i] = (float)std::rand() / RAND_MAX;
     }
 
+
+    
     // Block 1
     std::cout << "CONV 224x224x64";
     output = (float *)malloc(224 * 224 * 64 * 1 * sizeof(float));
     cuConv2D(input, output, 224, 224, 3, 1, 64, 3, 3, 1, 1, 1, 1, 1, 1);
     cuReLU(output, output, 224 * 224 * 64);
+
     std::swap(input, output);
     free(output);
 
