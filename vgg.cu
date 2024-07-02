@@ -385,6 +385,8 @@ int main()
         input[i] = (float)std::rand() / RAND_MAX;
     }
 
+        
+    auto start = std::chrono::steady_clock::now();
     // ===============  1 =====================
     std::cout << "CONV 224x224x64";
     output = (float *)malloc(224 * 224 * 64 * 1 * sizeof(float));
@@ -496,6 +498,13 @@ int main()
     std::cout << "FC 1000";
     output = (float *)malloc(1000 * sizeof(float));
     cuFC(input, output, 4096, 1000);
+
+    auto end = std::chrono::steady_clock::now();
+    int fwd_time = static_cast<int>(std::chrono::duration<double,
+                                                          std::micro>(end - start)
+                                        .count());
+
+    std::cout << "total time " << fwd_time << " ms" << std::endl;
     
     free(input);
     free(output);
